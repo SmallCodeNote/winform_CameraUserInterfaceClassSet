@@ -1,28 +1,44 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Drawing;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 using System.IO;
+using System.Media;
+
+using OpenCvSharp;
+using OpenCvSharp.Extensions;
+
+using FluentScheduler;
 
 using WinFormToStringClass;
 using FileCreateSupportClass;
 using WinFormPanelScrollSupportClass;
 using IndCamControlClass;
 
+using NetCamControlClass;
+using SoundControlClass;
+
+
 namespace CameraUserInterfaceSet
 {
     public partial class Form1 : Form
     {
 
+        NetCamControl netCamControl;
+
         string ThisExeLocationDirectory = "";
         string WinFormControlsSetupFilePath = @"param\controlsSetup.txt";
-       
+
+        SoundPlayer player = null;
+
+
         public Form1()
         {
             InitializeComponent();
@@ -35,6 +51,8 @@ namespace CameraUserInterfaceSet
             comboBox_IndCam_TileMode.Items.Add(PictureBoxSizeMode.CenterImage);
             comboBox_IndCam_TileMode.Items.Add(PictureBoxSizeMode.StretchImage);
             comboBox_IndCam_TileMode.Items.Add(PictureBoxSizeMode.Normal);
+
+            JobManager.Initialize();
 
         }
 
@@ -54,8 +72,10 @@ namespace CameraUserInterfaceSet
         {
 
             PanelScroll.clearControls(panel_IndCamPictureBox);
-            
-            
+
+            if (netCamControl != null) netCamControl.Dispose();
+
+
             //Save Controls Setup File
             string targetPath = Path.Combine(ThisExeLocationDirectory, WinFormControlsSetupFilePath);
 
@@ -297,6 +317,163 @@ namespace CameraUserInterfaceSet
             PanelScroll.pictureBoxSizeModeChange(panel_IndCamPictureBox, (PictureBoxSizeMode)(comboBox_IndCam_TileMode.SelectedItem));
 
         }
+
+        private void button_NetCam_getImage_Click(object sender, EventArgs e)
+        {
+            if (pictureBox_NetCam_View.Image != null) pictureBox_NetCam_View.Image.Dispose();
+            pictureBox_NetCam_View.Image = netCamControl.GetImage();
+
+        }
+
+        private void button_NetCam_getAverage_Click(object sender, EventArgs e)
+        {
+            int frameRange = int.Parse(textBox_NetCam_frameRange.Text);
+            if (pictureBox_NetCam_View.Image != null) pictureBox_NetCam_View.Image.Dispose();
+            pictureBox_NetCam_View.Image = netCamControl.GetImageTimeAverage(frameRange);
+        }
+
+        private void button_NetCam_getTimeMedian_Click(object sender, EventArgs e)
+        {
+            int frameRange = int.Parse(textBox_NetCam_frameRange.Text);
+            if (pictureBox_NetCam_View.Image != null) pictureBox_NetCam_View.Image.Dispose();
+            pictureBox_NetCam_View.Image = netCamControl.GetImageTimeMedian(frameRange);
+        }
+
+        private void button_NetCam_saveMovie_Click(object sender, EventArgs e)
+        {
+            SaveFileDialog sfd = new SaveFileDialog();
+            sfd.Filter = "WMV|*.wmv";
+
+            if (sfd.ShowDialog() != DialogResult.OK) return;
+
+            netCamControl.saveMovie(sfd.FileName);
+
+        }
+
+        private void button_NetCam_Connect__Click(object sender, EventArgs e)
+        {
+            if (button_NetCam_Connect.Text=="Connect")
+            {
+                button_NetCam_Connect.Enabled = false;
+                label_NetCam_Status.Text = "Connecting..."; NetCam_Status = "Connecting...";
+                backgroundWorker_NetCam_Connect.RunWorkerAsync();
+
+                button_NetCam_Connect.Text = "DisConnect";
+
+            }
+            else
+            {
+
+                if (backgroundWorker_NetCam_Connect.IsBusy)
+                {
+                    backgroundWorker_NetCam_Connect.CancelAsync();
+                    Thread.Sleep(200);
+                }
+
+               
+
+            }
+
+        }
+
+
+        string NetCam_Status = "";
+
+        private void backgroundWorker_NetCam_Connect_DoWork(object sender, DoWorkEventArgs e)
+        {
+            BackgroundWorker bw = (BackgroundWorker)sender;
+            bw.ReportProgress(0);
+
+            if (netCamControl != null) { netCamControl.Dispose(); }
+            netCamControl = new NetCamControl(textBox_NetCam_Address.Text, textBox_NetCam_id.Text, textBox_NetCam_passwd.Text);
+
+            do
+            {
+                NetCam_Status = "queCount = " + netCamControl.queCount.ToString();
+
+                if (netCamControl.queCount > 0)
+                {
+                    bw.ReportProgress(2);
+
+                }
+                else
+                {
+                    bw.ReportProgress(1);
+
+                }
+
+                Thread.Sleep(100);
+
+                if (bw.CancellationPending)
+                {
+
+                    e.Cancel = true;
+                    return;
+                }
+
+            } while (true);
+
+        }
+
+        private void backgroundWorker_NetCam_Connect_ProgressChanged(object sender, ProgressChangedEventArgs e)
+        {
+            if (e.ProgressPercentage == 0)
+            {
+                groupBox_NetCam_Operation.Enabled = false;
+
+            }
+            else if (e.ProgressPercentage == 1)
+            {
+                groupBox_NetCam_Operation.Enabled = false;
+                label_NetCam_Status.Text = NetCam_Status;
+
+            }
+            else if (e.ProgressPercentage == 2)
+            {
+                groupBox_NetCam_Operation.Enabled = true;
+                label_NetCam_Status.Text = NetCam_Status;
+
+                button_NetCam_Connect.Enabled = true;
+
+            }
+
+            label_NetCam_Status.Refresh();
+
+        }
+
+        private void backgroundWorker_NetCam_Connect_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (netCamControl != null) { netCamControl.Dispose(); }
+
+            button_NetCam_Connect.Text = "Connect";
+            groupBox_NetCam_Operation.Enabled = false;
+            label_NetCam_Status.Text = "...";
+        }
+
+        private void button_ScheduleList_Load_Click(object sender, EventArgs e)
+        {
+            JobManager.Stop();
+            JobManager.AddJob(() => UpdateText(label_ScheduleList_Status,DateTime.Now.ToString("HH:mm:ss")), s => s.ToRunEvery(5).Seconds());
+            JobManager.Initialize();
+        }
+
+        public delegate void DelegateUpdateText(object control, object value);
+
+        private void UpdateText(object control, object value)
+        {
+            if (this.InvokeRequired)
+            {
+                this.Invoke(new DelegateUpdateText(this.UpdateText), new object[] { control, value });
+                return;
+            }
+
+            if (control is Label) { ((Label)control).Text = ((string)value); }
+            else if (control is TextBox) { ((TextBox)control).Text = ((string)value); }
+            else if (control is Button) { ((Button)control).Text = ((string)value); }
+
+        }
+
+
     }
 
 }
